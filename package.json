@@ -1,0 +1,23 @@
+{
+  "name": "terra.gun",
+  "version": "1.0.0",
+  "description": "Adapter for the universe to use the GUN DB (distributed JS DB)",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Thoregon/terra.gun.git"
+  },
+  "keywords": [],
+  "author": "Bernhard Lukassen <bl@bernhard-lukassen.com> (http://www.bernhard-lukassen.com/)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Thoregon/terra.gun/issues"
+  },
+  "homepage": "https://github.com/Thoregon/terra.gun#readme",
+  "dependencies": {
+    "gun": "^0.2019.1211"
+  }
+}
