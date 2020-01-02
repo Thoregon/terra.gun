@@ -5,8 +5,7 @@
  */
 
 import { myterra }      from '/evolux.universe';
-import GunService       from "./lib/gunservice.mjs";
-
+import GunService       from "./lib/reliant/gunservice.mjs";
 
 export const service = {
     install() {
