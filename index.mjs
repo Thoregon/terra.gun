@@ -4,6 +4,7 @@
  * @author: Bernhard Lukassen
  */
 
-import GunService       from "./lib/gunservice.mjs";
+export { default as GunLayer }  from './lib/gunlayer.mjs';
 
-export const service = new GunService();
+import GunService               from "./lib/gunservice.mjs";
+export const service =          new GunService();
