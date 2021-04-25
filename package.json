@@ -17,7 +17,5 @@
     "url": "https://github.com/Thoregon/terra.gun/issues"
   },
   "homepage": "https://github.com/Thoregon/terra.gun#readme",
-  "dependencies": {
-    "gun": "^0.2019.1228"
-  }
+  "dependencies": {}
 }
