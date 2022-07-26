@@ -1,68 +1,172 @@
-;(function(){
+/*
+ * GUN storage adapter for indexedDB
+ * does not check the environment, if indexedDB not available returns null
+ *
+ * todo [OPEN]:
+ *  - check and handle quotas
+ *
+ */
 
-  function Store(opt){
-    opt = opt || {};
-    opt.file = String(opt.file || 'radata');
-    var db = null, u;
+// no 'indexedBD' -> can't use this adapter
+if (!('indexedDB' in this)) return;
 
-    try{opt.indexedDB = opt.indexedDB || indexedDB}catch(e){}
-    try{if(!opt.indexedDB || 'file:' == location.protocol){
-      var store = {}, s = {};
-      store.put = function(f, d, cb){ s[f] = d; cb(null, 1) };
-      store.get = function(f, cb){ cb(null, s[f] || u) };
-      console.log('Warning: No indexedDB exists to persist data to!');
-      return store;
-    }}catch(e){}
-    
-    var store = function Store(){};
-    if(Store[opt.file]){
-      console.log("Warning: reusing same IndexedDB store and options as 1st.");
-      return Store[opt.file];
+//
+// constants
+//
+
+const WEBKIT_RESTART_INTERVAL = 15000; // 15 seconds
+const VERSION_REOPEN_DELAY    =   350;
+
+// if multiple DB's used keep their adapter instances
+const Stores = {};
+
+/**
+ * storage adapter
+ *
+ * further information:
+ * - https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
+ * - https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Basic_Terminology
+ * - https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB
+ *
+ * To consider (reported problems):
+ * - https://www.nerd.vision/post/how-we-solved-a-case-where-indexeddb-did-not-connect
+ * - https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB#version_changes_while_a_web_app_is_open_in_another_tab
+ * - https://stackoverflow.com/questions/30580958/database-get-blocked-when-another-tab-of-same-application-is-open
+ * - https://gist.github.com/pesterhazy/4de96193af89a6dd5ce682ce2adff49a
+ * - https://www.raymondcamden.com/2015/04/17/indexeddb-and-limits
+ */
+class RIndexedStore {
+
+    constructor(opt) {
+        this.opt    = opt;
+        this.dbName = opt.file;
+        this._getQ  = [];    // keep 'get' request until the DB is ready
+        this._putQ  = [];    // keep 'put' request until the DB is ready
     }
-    Store[opt.file] = store;
 
-    store.start = function(){
-      var o = indexedDB.open(opt.file, 1);
-      o.onupgradeneeded = function(eve){ (eve.target.result).createObjectStore(opt.file) }
-      o.onsuccess = function(){ db = o.result }
-      o.onerror = function(eve){ console.log(eve||1); }
-    }; store.start();
+    /**
+     * Open an indexed DB
+     * Create a store if missing
+     * Handle exceptions and bugs
+     */
+    start() {
+        var openDB = indexedDB.open(this.dbName, 1);
 
-    store.put = function(key, data, cb){
-      if(!db){ setTimeout(function(){ store.put(key, data, cb) },1); return }
-      var tx = db.transaction([opt.file], 'readwrite');
-      var obj = tx.objectStore(opt.file);
-      var req = obj.put(data, ''+key);
-      req.onsuccess = obj.onsuccess = tx.onsuccess = function(){ cb(null, 1) }
-      req.onabort = obj.onabort = tx.onabort = function(eve){ cb(eve||'put.tx.abort') }
-      req.onerror = obj.onerror = tx.onerror = function(eve){ cb(eve||'put.tx.error') }
+        openDB.onupgradeneeded = (evt) => {
+            const db = evt.target.result;
+            const store = db.createObjectStore(opt.file);
+            store.createIndex('id', 'id', { unique: true });
+        };
+        openDB.onblocked = () => {
+            setTimeout(() => this.restart(), VERSION_REOPEN_DELAY);
+        };
+        openDB.onsuccess       = (evt) => {
+            const db = this.db = ev.target.result;
+            // add a handler for version change from another tab
+            // this may block the DB and cause irregular behavior
+            db.onversionchange = () => {
+                const db = this.db;
+                delete this.db;
+                db.close();
+                // try reopen after version change
+                setTimeout(() => this.start(), VERSION_REOPEN_DELAY);
+            };
+            // this is an ugly workaround to reset webkit bug
+            if (window.webkitURL) this.restartIntervalId = setInterval(() => this.restart(), WEBKIT_RESTART_INTERVAL);
+
+            this.processQs();
+        }
+        openDB.onerror         = (evt) => {
+            console.log('IndexedDB Error:', evt);
+        }
     }
 
-    store.get = function(key, cb){
-      if(!db){ setTimeout(function(){ store.get(key, cb) },9); return }
-      var tx = db.transaction([opt.file], 'readonly');
-      var obj = tx.objectStore(opt.file);
-      var req = obj.get(''+key);
-      req.onsuccess = function(){ cb(null, req.result) }
-      req.onabort = function(eve){ cb(eve||4) }
-      req.onerror = function(eve){ cb(eve||5) }
+    //
+    // base functions
+    //
+
+    put(key, data, cb) {
+        const db = this.db;
+        if (!db) {
+            this._putQ.push({ key, data, cb });
+            return;
+        }
+        key = '' + key;     // sanitize
+
+        this.get(key, (ignore, exists) => {
+            const transaction = this.db.transaction(this.dbName, 'readwrite');
+            const store       = transaction.objectStore(this.dbName);
+            if (exists) {
+                store.put({ id: key, payload: data });
+            } else {
+                store.add({ id: key, payload: data });
+            }
+            transaction.onabort    = (evt) => cb(evt || 'put.tx.abort');
+            transaction.onerror    = (evt) => cb(evt || 'put.tx.error');
+            transaction.oncomplete = (evt) => cb(null, 1);
+        });
     }
-    setInterval(function(){ db && db.close(); db = null; store.start() }, 1000 * 15); // reset webkit bug?
+
+    get(key, cb) {
+        const db = this.db;
+        if (!db) {
+            this._getQ.push({ key, cb });
+            return;
+        }
+        key = '' + key;     // sanitize
+
+        const request     = this.db
+                                .transaction(this.dbName, 'readonly')
+                                .objectStore(this.dbName)
+                                .get(key);
+        request.onabort   = cb(evt || 4);
+        request.onerror   = cb(evt || 5);
+        request.onsuccess = (ev) => cb(null, req.result?.payload);
+    }
+
+    //
+    // maintenance
+    //
+
+    restart() {
+        if (this.restartIntervalId) clearInterval(this.restartIntervalId);
+        this.db?.close();
+        delete this.db;
+        this.start();
+    }
+
+    //
+    // process request queues
+    //
+
+    processQs() {
+        this._getQ.forEach(({ key, cb }) => this.get(key, cb));
+        this._putQ.forEach(({ key, data, cb }) => this.put(key, data, cb));
+    }
+}
+
+function createStore(opt) {
+    opt      = opt || {};
+    const dbName = opt.file = String(opt.file || 'radata');
+    if (Stores[dbName]) {
+        console.log("Warning: reusing same IndexedDB store and options as 1st.");
+        return Stores[dbName];
+    }
+
+    const store = Stores[dbName] = new RIndexedStore(opt);
+    store.start();
     return store;
-  }
+}
 
-  if(typeof window !== "undefined"){
-    (Store.window = window).RindexedDB = Store;
-  } else {
-    try{ module.exports = Store }catch(e){}
-  }
-
-  try{
-    var Gun = Store.window.Gun || require('../gun');
-    Gun.on('create', function(root){
-      this.to.next(root);
-      root.opt.store = root.opt.store || Store(root.opt);
+try {
+    const Gun = window.Gun;
+    Gun.on('create', function (root) {
+        this.to.next(root);
+        root.opt.store = root.opt.store || createStore(root.opt);
     });
-  }catch(e){}
+} catch (e) {
+    console.loe("Can't create RIndexedDB storage adapter");
+}
 
-}());
+// export if 'required'
+try { module.exports = createStore } catch (e) {}
