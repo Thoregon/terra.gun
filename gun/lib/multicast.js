@@ -22,11 +22,10 @@ Gun.on('create', function(root){
   socket.bind({port: udp.port, exclusive: true}, function(){
     socket.setBroadcast(true);
     socket.setMulticastTTL(128);
-    try{ socket.addMembership(udp.address); }catch(e){}
   });
 
   socket.on("listening", function(){
-    try { socket.addMembership(udp.address) }catch(e){ return }
+    try { socket.addMembership(udp.address) }catch(e){ console.error(e); return; }
     udp.peer = {id: udp.address + ':' + udp.port, wire: socket};
 
     udp.peer.say = function(raw){
@@ -36,8 +35,9 @@ Gun.on('create', function(root){
       }
       socket.send(buf, 0, buf.length, udp.port, udp.address, noop);
     }
+    //opt.mesh.hi(udp.peer);
 
-    console.log('Multicast on', udp.peer.id);
+    Gun.log.once('multi', 'Multicast on '+udp.peer.id);
     return; // below code only needed for when WebSocket connections desired!
     setInterval(function broadcast(){
       port = port || (opt.web && opt.web.address()||{}).port;
@@ -60,7 +60,7 @@ Gun.on('create', function(root){
 
     var url = 'http://' + info.address + ':' + (port || (opt.web && opt.web.address()||{}).port) + '/gun';
     if(root.opt.peers[url]){ return }
-  
+
     //console.log('discovered', url, message, info);
     root.$.opt(url);
 
@@ -84,7 +84,7 @@ Gun.on('create', function(root){
     }
     if((tmp = root.stats) && (tmp = tmp.gap) && info){ (tmp.near || (tmp.near = {}))[info.address] = info.port || 1 } // STATS!
     if(check.on || id === pid){ return }
-    root.on('out', check.on = say);
+    root.on('out', check.on = say); // TODO: MULTICAST NEEDS TO BE CHECKED FOR NEW CODE SYSTEM!!!!!!!!!!
   }
 
   setInterval(check, 1000 * 1);
