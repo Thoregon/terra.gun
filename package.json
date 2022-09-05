@@ -17,5 +17,10 @@
     "url": "https://github.com/Thoregon/terra.gun/issues"
   },
   "homepage": "https://github.com/Thoregon/terra.gun#readme",
-  "dependencies": {}
+  "dependencies": {
+    "@peculiar/webcrypto": "^1.0.19",
+    "emailjs": "^2.2.0",
+    "text-encoding": "^0.7.0",
+    "ws": "~>7.1.0"
+  }
 }
